@@ -92,17 +92,17 @@ export class McpSamplingService extends Disposable implements IMcpSamplingServic
 		const model = await this._modelSequencer.queue(() => this._getMatchingModel(opts));
 
 		// Build request options, passing through tools if provided (SEP-1577)
-		const requestOptions: ILanguageModelChatRequestOptions = {};
-		if (opts.params.tools?.length && opts.params.toolChoice?.mode !== 'none') {
-			requestOptions.tools = opts.params.tools.map(tool => ({
-				name: tool.name,
-				description: tool.description ?? '',
-				inputSchema: tool.inputSchema,
-			}));
-			if (opts.params.toolChoice?.mode === 'required') {
-				requestOptions.toolMode = 2; // LanguageModelChatToolMode.Required
-			}
-		}
+		const hasTools = opts.params.tools?.length && opts.params.toolChoice?.mode !== 'none';
+		const requestOptions: ILanguageModelChatRequestOptions = {
+			...(hasTools ? {
+				tools: opts.params.tools!.map(tool => ({
+					name: tool.name,
+					description: tool.description ?? '',
+					inputSchema: tool.inputSchema,
+				})),
+				...(opts.params.toolChoice?.mode === 'required' ? { toolMode: 2 /* LanguageModelChatToolMode.Required */ } : {}),
+			} : {}),
+		};
 
 		const response = await this._languageModelsService.sendChatRequest(model, undefined, messages, requestOptions, token);
 
