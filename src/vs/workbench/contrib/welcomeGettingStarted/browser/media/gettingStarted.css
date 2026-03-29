@@ -109,7 +109,7 @@
 	height: 100%;
 	max-width: 1200px;
 	margin: 0 auto;
-	grid-template-rows: 25% minmax(min-content, auto) min-content;
+	grid-template-rows: auto minmax(min-content, auto) min-content;
 	grid-template-columns: 1fr 6fr 1fr 6fr 1fr;
 	grid-template-areas:
 		".  header header header ."
@@ -168,6 +168,11 @@
 .monaco-workbench .part.editor > .content .gettingStartedContainer .gettingStartedSlideCategories > .gettingStartedCategoriesContainer > .header {
 	grid-area: header;
 	align-self: end;
+	text-align: center;
+}
+
+.monaco-workbench .part.editor > .content .gettingStartedContainer .gettingStartedSlideCategories > .gettingStartedCategoriesContainer > .header .splash-hero {
+	pointer-events: auto;
 }
 
 .monaco-workbench .part.editor > .content .gettingStartedContainer .gettingStartedSlideCategories > .gettingStartedCategoriesContainer > .footer {

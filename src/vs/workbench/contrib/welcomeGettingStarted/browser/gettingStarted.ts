@@ -21,7 +21,7 @@ import { splitRecentLabel } from '../../../../base/common/labels.js';
 import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
 import { ILink, LinkedText } from '../../../../base/common/linkedText.js';
 import { parse } from '../../../../base/common/marshalling.js';
-import { Schemas, matchesScheme } from '../../../../base/common/network.js';
+import { FileAccess, Schemas, matchesScheme } from '../../../../base/common/network.js';
 import { OS } from '../../../../base/common/platform.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { assertReturnsDefined } from '../../../../base/common/types.js';
@@ -919,9 +919,18 @@ export class GettingStartedPage extends EditorPane {
 			onShowOnStartupChanged();
 		}));
 
+		const splashImage = $('img.splash-hero', { src: FileAccess.asBrowserUri('vs/workbench/contrib/welcomeGettingStarted/common/media/splash.png').toString(true) });
+		splashImage.style.width = '100%';
+		splashImage.style.maxWidth = '800px';
+		splashImage.style.borderRadius = '12px';
+		splashImage.style.marginTop = '24px';
+		splashImage.style.marginBottom = '16px';
+		splashImage.style.boxShadow = '0 4px 24px rgba(0,0,0,0.4)';
+
 		const header = $('.header', {},
-			$('h1.product-name.caption', {}, this.productService.nameLong),
-			$('p.subtitle.description', {}, localize({ key: 'gettingStarted.editingEvolved', comment: ['Shown as subtitle on the Welcome page.'] }, "Editing evolved"))
+			splashImage,
+			$('h1.product-name.caption', {}, 'VS Code + MCP Sampling'),
+			$('p.subtitle.description', {}, 'Now with SEP-1577: Sampling with Tool Calling')
 		);
 
 		const leftColumn = $('.categories-column.categories-column-left', {},);
