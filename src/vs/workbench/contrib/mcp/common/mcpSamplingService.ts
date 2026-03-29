@@ -105,16 +105,56 @@ export class McpSamplingService extends Disposable implements IMcpSamplingServic
 			} : {}),
 		};
 
-		// Report sampling request to chat progress
-		if (opts.progress && hasTools) {
-			const toolNames = opts.params.tools!.map(t => t.name).join(', ');
+		// Accumulating progress log — each report re-emits the full log so lines don't disappear
+		const progressLines: string[] = [];
+		const reportProgress = (line: string) => {
+			if (!opts.progress) { return; }
+			progressLines.push(line);
 			const msg = new MarkdownString(undefined, { supportThemeIcons: true });
-			msg.appendMarkdown(`$(sparkle) **MCP Sampling** — server requested LM call with tools: `);
-			msg.appendText(toolNames);
+			msg.appendMarkdown(progressLines.map(l => `- ${l}`).join('\n'));
 			opts.progress.report({ message: msg });
+		};
+
+		// --- Report sampling request details ---
+		const startTime = Date.now();
+		reportProgress(`$(sparkle) **MCP Sampling — Request received from server "${opts.server.definition.label}"**`);
+
+		if (opts.params.systemPrompt) {
+			const truncSys = opts.params.systemPrompt.length > 200 ? opts.params.systemPrompt.slice(0, 200) + '...' : opts.params.systemPrompt;
+			reportProgress(`$(note) System prompt: "${truncSys}"`);
 		}
 
+		for (const m of opts.params.messages) {
+			const contentArr = Array.isArray(m.content) ? m.content : [m.content];
+			for (const c of contentArr) {
+				if (c.type === 'text') {
+					const truncText = c.text.length > 300 ? c.text.slice(0, 300) + '...' : c.text;
+					reportProgress(`$(mail) **${m.role}**: "${truncText}"`);
+				} else if (c.type === 'tool_use') {
+					reportProgress(`$(mail) **${m.role}**: tool\_use **${c.name}**(${JSON.stringify(c.input)})`);
+				} else if (c.type === 'tool_result') {
+					const resultText = c.content?.filter((r: MCP.ContentBlock) => r.type === 'text').map((r: MCP.ContentBlock) => (r as MCP.TextContent).text).join(', ') ?? '';
+					const truncResult = resultText.length > 300 ? resultText.slice(0, 300) + '...' : resultText;
+					reportProgress(`$(mail) **${m.role}**: tool\_result${c.isError ? ' (error)' : ''}: "${truncResult}"`);
+				} else {
+					reportProgress(`$(mail) **${m.role}**: ${c.type}`);
+				}
+			}
+		}
+
+		if (hasTools) {
+			for (const tool of opts.params.tools!) {
+				const desc = tool.description ? ` — ${tool.description}` : '';
+				reportProgress(`$(tools) Tool: **${tool.name}**${desc}`);
+			}
+		}
+
+		reportProgress(`$(vm) Model selected: **${model}**`);
+		reportProgress(`$(rocket) Sending request to LM...`);
+
 		const response = await this._languageModelsService.sendChatRequest(model, undefined, messages, requestOptions, token);
+
+		reportProgress(`$(sync~spin) Streaming response from LM...`);
 
 		let responseText = '';
 		const toolUseParts: MCP.ToolUseContent[] = [];
@@ -139,19 +179,19 @@ export class McpSamplingService extends Disposable implements IMcpSamplingServic
 
 		try {
 			await Promise.all([response.result, streaming]);
+			const elapsed = Date.now() - startTime;
 
 			if (toolUseParts.length > 0) {
-				// Report tool calls to chat progress
-				if (opts.progress) {
-					for (const t of toolUseParts) {
-						const args = JSON.stringify(t.input);
-						const truncated = args.length > 120 ? args.slice(0, 120) + '...' : args;
-						const msg = new MarkdownString(undefined, { supportThemeIcons: true });
-						msg.appendMarkdown(`$(play) **MCP Sampling** — LM called tool `);
-						msg.appendText(`${t.name}(${truncated})`);
-						opts.progress.report({ message: msg });
-					}
+				reportProgress(`$(play) **LM responded with ${toolUseParts.length} tool call(s)** (${elapsed}ms)`);
+				if (responseText) {
+					const truncResp = responseText.length > 300 ? responseText.slice(0, 300) + '...' : responseText;
+					reportProgress(`$(quote) LM text: "${truncResp}"`);
 				}
+				for (const t of toolUseParts) {
+					const args = JSON.stringify(t.input, undefined, 2);
+					reportProgress(`$(arrow-right) Tool call: **${t.name}**(${args})`);
+				}
+				reportProgress(`$(arrow-left) Returning tool call(s) to MCP server with stopReason=toolUse`);
 
 				// Model wants to call tools — return ToolUseContent to the MCP server
 				const content: MCP.SamplingMessageContentBlock[] = [];
@@ -170,12 +210,9 @@ export class McpSamplingService extends Disposable implements IMcpSamplingServic
 				};
 			}
 
-			// Report text response to chat progress
-			if (opts.progress) {
-				const msg = new MarkdownString(undefined, { supportThemeIcons: true });
-				msg.appendMarkdown(`$(check) **MCP Sampling** — LM responded with text`);
-				opts.progress.report({ message: msg });
-			}
+			reportProgress(`$(check) **LM responded with text** (${elapsed}ms, ${responseText.length} chars)`);
+			reportProgress(`$(quote) Response: "${responseText}"`);
+			reportProgress(`$(arrow-left) Returning text response to MCP server`);
 
 			this._logs.add(opts.server, opts.params.messages, responseText, model);
 			return {
@@ -186,6 +223,7 @@ export class McpSamplingService extends Disposable implements IMcpSamplingServic
 				},
 			};
 		} catch (err) {
+			reportProgress(`$(error) **Sampling failed**: ${err}`);
 			throw McpError.unknown(err);
 		}
 	}
