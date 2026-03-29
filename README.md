@@ -1,6 +1,6 @@
 # VS Code fork with MCP Sampling + Tool Calling (SEP-1577)
 
-> **Disclaimer:** This is not an official or production-ready implementation. It was hacked together quickly for a demo video to illustrate how SEP-1577 works in practice. Use at your own risk.
+> **Disclaimer:** This is not an official or production-ready implementation. It was put together quickly for a demo video to illustrate how SEP-1577 works in practice. Use at your own risk.
 
 This is a fork of [VS Code](https://github.com/microsoft/vscode) that adds support for [SEP-1577: Sampling with Tools](https://modelcontextprotocol.io/seps/1577--sampling-with-tools).
 
