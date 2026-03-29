@@ -909,6 +909,7 @@ export interface ISamplingOptions {
 	server: IMcpServer;
 	isDuringToolCall: boolean;
 	params: MCP.CreateMessageRequest['params'];
+	progress?: ToolProgress;
 }
 
 export interface ISamplingResult {

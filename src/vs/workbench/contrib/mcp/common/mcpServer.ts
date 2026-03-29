@@ -424,6 +424,8 @@ export class McpServer extends Disposable implements IMcpServer {
 	private _potentialSandboxBlockListener = this._register(new MutableDisposable<IDisposable>());
 	/** Count of running tool calls, used to detect if sampling is during an LM call */
 	public runningToolCalls = new Set<IMcpToolCallContext>();
+	/** Progress callbacks for running tool calls, used to report sampling activity */
+	public runningToolCallProgress = new Map<IMcpToolCallContext, ToolProgress>();
 
 	public readonly enablement: IObservable<ContributionEnablementState>;
 
@@ -652,11 +654,15 @@ export class McpServer extends Disposable implements IMcpServer {
 
 			const start = Date.now();
 			let state = await connection.start({
-				createMessageRequestHandler: (params, token) => this._samplingService.sample({
-					isDuringToolCall: this.runningToolCalls.size > 0,
-					server: this,
-					params,
-				}, token).then(r => r.sample),
+				createMessageRequestHandler: (params, token) => {
+					const progress = Iterable.first(this.runningToolCallProgress.values());
+					return this._samplingService.sample({
+						isDuringToolCall: this.runningToolCalls.size > 0,
+						server: this,
+						params,
+						progress,
+					}, token).then(r => r.sample);
+				},
 				elicitationRequestHandler: async (req, token) => {
 					const serverInfo = connection.handler.get()?.serverInfo;
 					if (serverInfo) {
@@ -1166,11 +1172,17 @@ export class McpTool implements IMcpTool {
 	}
 
 	async callWithProgress(params: Record<string, unknown>, progress: ToolProgress, context?: IMcpToolCallContext, token?: CancellationToken): Promise<MCP.CallToolResult> {
-		if (context) { this._server.runningToolCalls.add(context); }
+		if (context) {
+			this._server.runningToolCalls.add(context);
+			this._server.runningToolCallProgress.set(context, progress);
+		}
 		try {
 			return await this._callWithProgress(params, progress, context, token);
 		} finally {
-			if (context) { this._server.runningToolCalls.delete(context); }
+			if (context) {
+				this._server.runningToolCalls.delete(context);
+				this._server.runningToolCallProgress.delete(context);
+			}
 		}
 	}
 

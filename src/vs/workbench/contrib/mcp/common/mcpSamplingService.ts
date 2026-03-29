@@ -7,6 +7,7 @@ import { asArray } from '../../../../base/common/arrays.js';
 import { mapFindFirst } from '../../../../base/common/arraysFind.js';
 import { Sequencer } from '../../../../base/common/async.js';
 import { decodeBase64 } from '../../../../base/common/buffer.js';
+import { MarkdownString } from '../../../../base/common/htmlContent.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
@@ -104,6 +105,15 @@ export class McpSamplingService extends Disposable implements IMcpSamplingServic
 			} : {}),
 		};
 
+		// Report sampling request to chat progress
+		if (opts.progress && hasTools) {
+			const toolNames = opts.params.tools!.map(t => t.name).join(', ');
+			const msg = new MarkdownString(undefined, { supportThemeIcons: true });
+			msg.appendMarkdown(`$(sparkle) **MCP Sampling** — server requested LM call with tools: `);
+			msg.appendText(toolNames);
+			opts.progress.report({ message: msg });
+		}
+
 		const response = await this._languageModelsService.sendChatRequest(model, undefined, messages, requestOptions, token);
 
 		let responseText = '';
@@ -131,6 +141,18 @@ export class McpSamplingService extends Disposable implements IMcpSamplingServic
 			await Promise.all([response.result, streaming]);
 
 			if (toolUseParts.length > 0) {
+				// Report tool calls to chat progress
+				if (opts.progress) {
+					for (const t of toolUseParts) {
+						const args = JSON.stringify(t.input);
+						const truncated = args.length > 120 ? args.slice(0, 120) + '...' : args;
+						const msg = new MarkdownString(undefined, { supportThemeIcons: true });
+						msg.appendMarkdown(`$(play) **MCP Sampling** — LM called tool `);
+						msg.appendText(`${t.name}(${truncated})`);
+						opts.progress.report({ message: msg });
+					}
+				}
+
 				// Model wants to call tools — return ToolUseContent to the MCP server
 				const content: MCP.SamplingMessageContentBlock[] = [];
 				if (responseText) {
@@ -146,6 +168,13 @@ export class McpSamplingService extends Disposable implements IMcpSamplingServic
 						stopReason: 'toolUse',
 					},
 				};
+			}
+
+			// Report text response to chat progress
+			if (opts.progress) {
+				const msg = new MarkdownString(undefined, { supportThemeIcons: true });
+				msg.appendMarkdown(`$(check) **MCP Sampling** — LM responded with text`);
+				opts.progress.report({ message: msg });
 			}
 
 			this._logs.add(opts.server, opts.params.messages, responseText, model);
