@@ -18,7 +18,7 @@ import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { ChatConfiguration } from '../../chat/common/constants.js';
-import { ChatImageMimeType, ChatMessageRole, IChatMessage, IChatMessagePart, ILanguageModelsService } from '../../chat/common/languageModels.js';
+import { ChatImageMimeType, ChatMessageRole, IChatMessage, IChatMessagePart, ILanguageModelChatRequestOptions, ILanguageModelsService } from '../../chat/common/languageModels.js';
 import { McpCommandIds } from './mcpCommandIds.js';
 import { IMcpServerSamplingConfiguration, mcpServerSamplingSection } from './mcpConfiguration.js';
 import { McpSamplingLog } from './mcpSamplingLog.js';
@@ -58,12 +58,23 @@ export class McpSamplingService extends Disposable implements IMcpSamplingServic
 
 	async sample(opts: ISamplingOptions, token = CancellationToken.None): Promise<ISamplingResult> {
 		const messages = opts.params.messages.map((message): IChatMessage | undefined => {
-			const content: IChatMessagePart[] = asArray(message.content).map((part): IChatMessagePart | undefined => part.type === 'text'
-				? { type: 'text', value: part.text }
-				: part.type === 'image' || part.type === 'audio'
-					? { type: 'image_url', value: { mimeType: part.mimeType as ChatImageMimeType, data: decodeBase64(part.data) } }
-					: undefined
-			).filter(isDefined);
+			const content: IChatMessagePart[] = asArray(message.content).map((part): IChatMessagePart | undefined => {
+				if (part.type === 'text') {
+					return { type: 'text', value: part.text };
+				} else if (part.type === 'image' || part.type === 'audio') {
+					return { type: 'image_url', value: { mimeType: part.mimeType as ChatImageMimeType, data: decodeBase64(part.data) } };
+				} else if (part.type === 'tool_use') {
+					return { type: 'tool_use', name: part.name, toolCallId: part.id, parameters: part.input };
+				} else if (part.type === 'tool_result') {
+					return {
+						type: 'tool_result',
+						toolCallId: part.toolUseId,
+						value: part.content.filter(c => c.type === 'text').map(c => ({ type: 'text' as const, value: (c as MCP.TextContent).text })),
+						isError: part.isError,
+					};
+				}
+				return undefined;
+			}).filter(isDefined);
 
 			if (!content.length) {
 				return undefined;
@@ -79,34 +90,70 @@ export class McpSamplingService extends Disposable implements IMcpSamplingServic
 		}
 
 		const model = await this._modelSequencer.queue(() => this._getMatchingModel(opts));
-		const response = await this._languageModelsService.sendChatRequest(model, undefined, messages, {}, token);
+
+		// Build request options, passing through tools if provided (SEP-1577)
+		const requestOptions: ILanguageModelChatRequestOptions = {};
+		if (opts.params.tools?.length && opts.params.toolChoice?.mode !== 'none') {
+			requestOptions.tools = opts.params.tools.map(tool => ({
+				name: tool.name,
+				description: tool.description ?? '',
+				inputSchema: tool.inputSchema,
+			}));
+			if (opts.params.toolChoice?.mode === 'required') {
+				requestOptions.toolMode = 2; // LanguageModelChatToolMode.Required
+			}
+		}
+
+		const response = await this._languageModelsService.sendChatRequest(model, undefined, messages, requestOptions, token);
 
 		let responseText = '';
+		const toolUseParts: MCP.ToolUseContent[] = [];
 
-		// MCP doesn't have a notion of a multi-part sampling response, so we only preserve text
-		// Ref https://github.com/modelcontextprotocol/modelcontextprotocol/issues/91
 		const streaming = (async () => {
 			for await (const part of response.stream) {
-				if (Array.isArray(part)) {
-					for (const p of part) {
-						if (p.type === 'text') {
-							responseText += p.value;
-						}
+				const parts = Array.isArray(part) ? part : [part];
+				for (const p of parts) {
+					if (p.type === 'text') {
+						responseText += p.value;
+					} else if (p.type === 'tool_use') {
+						toolUseParts.push({
+							type: 'tool_use',
+							id: p.toolCallId,
+							name: p.name,
+							input: p.parameters,
+						});
 					}
-				} else if (part.type === 'text') {
-					responseText += part.value;
 				}
 			}
 		})();
 
 		try {
 			await Promise.all([response.result, streaming]);
+
+			if (toolUseParts.length > 0) {
+				// Model wants to call tools — return ToolUseContent to the MCP server
+				const content: MCP.SamplingMessageContentBlock[] = [];
+				if (responseText) {
+					content.push({ type: 'text', text: responseText });
+				}
+				content.push(...toolUseParts);
+				this._logs.add(opts.server, opts.params.messages, responseText || `[tool_use: ${toolUseParts.map(t => t.name).join(', ')}]`, model);
+				return {
+					sample: {
+						model,
+						content: content.length === 1 ? content[0] : content,
+						role: 'assistant',
+						stopReason: 'toolUse',
+					},
+				};
+			}
+
 			this._logs.add(opts.server, opts.params.messages, responseText, model);
 			return {
 				sample: {
 					model,
 					content: { type: 'text', text: responseText },
-					role: 'assistant', // it came from the model!
+					role: 'assistant',
 				},
 			};
 		} catch (err) {

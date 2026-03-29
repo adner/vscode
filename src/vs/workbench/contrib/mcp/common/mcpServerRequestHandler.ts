@@ -116,7 +116,7 @@ export class McpServerRequestHandler extends Disposable {
 						protocolVersion: MCP.LATEST_PROTOCOL_VERSION,
 						capabilities: {
 							roots: { listChanged: true },
-							sampling: opts.createMessageRequestHandler ? {} : undefined,
+							sampling: opts.createMessageRequestHandler ? { tools: {} } : undefined,
 							elicitation: opts.elicitationRequestHandler ? { form: {}, url: {} } : undefined,
 							tasks: {
 								list: {},
